@@ -135,6 +135,7 @@ calculate_fvd_tensorflow.py
     - **Download pretrained model**: If you have something wrong with downloading FVD pre-trained model, you should manually download any of the following and put it into FVD folder. 
         - **For Stylegan**: `i3d_torchscript.pt` from [here](https://www.dropbox.com/s/ge9e5ujwgetktms/i3d_torchscript.pt).
         - **For Videogpt**: `i3d_pretrained_400.pt` from [here](https://onedrive.live.com/download?cid=78EEF3EB6AE7DBCB&resid=78EEF3EB6AE7DBCB%21199&authkey=AApKdFHPXzWLNyI).
+        - 👆**The original link is broken?** You can use this copy file [here](https://github.com/npurson/fid-metrics/releases/tag/v1.0), and see related issues [here](https://github.com/JunyaoHu/common_metrics_on_video_quality/issues/27).
         - Now **We have supported 2 pytorch-based FVD implementations** ([videogpt](https://github.com/wilson1yan/VideoGPT) and [styleganv](https://github.com/universome/stylegan-v), see issue [#4](https://github.com/JunyaoHu/common_metrics_on_video_quality/issues/4)). Their calculations are almost identical, and the difference is negligible.
     - **Constrain for video length**: Because the i3d model downsamples in the time dimension, we should make sure `frames_num > 10` when calculating FVD, so FVD calculation begins from 10-th frame.
     - **Calculating process**: FVD calculates the feature distance between two sets of videos (The I3D features of each video are do not go through the `softmax()` function, and the size of the last dimension is 400, not 1024).
