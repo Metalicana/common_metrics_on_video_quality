@@ -134,3 +134,7 @@ if __name__ == "__main__":
     
 # Example usage:
 # python run_metrics.py --gen /path/to/my_generation_folder --val /path/to/validation_folder --frames 81 --size 224
+
+# /home/ab575577/projects_spring_2026/AeroBench/TII/videos
+
+# /home/ab575577/projects_fall_2025/Aero-predict/validation_res
