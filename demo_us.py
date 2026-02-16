@@ -1,140 +1,144 @@
-import torch
+import sys
 import os
-import cv2
+
+# Add the current directory to sys.path to resolve internal metric imports
+sys.path.append(os.getcwd())
+
+import torch
 import numpy as np
-import json
 import argparse
-from torch.utils.data import DataLoader, Dataset
+import yaml
+import cv2
+import json
 from tqdm import tqdm
 
-# Import your metric functions
-# Ensure these files are in the same directory or python path
-from calculate_fvd import calculate_fvd
-from calculate_psnr import calculate_psnr
-from calculate_ssim import calculate_ssim
-from calculate_lpips import calculate_lpips
+# Ensure these files are in your python path
+try:
+    from calculate_fvd import calculate_fvd
+    from calculate_psnr import calculate_psnr
+    from calculate_ssim import calculate_ssim
+    from calculate_lpips import calculate_lpips
+except ImportError:
+    print("❌ Error: Metric calculation scripts (calculate_fvd.py, etc.) not found in path.")
+    sys.exit(1)
 
-class VideoLoader:
-    def __init__(self, size=224, num_frames=81):
-        self.size = size
+class ManifestVideoDataset:
+    def __init__(self, generated_dir, id_manifest, data_root, num_frames=81, size=384):
+        self.generated_dir = generated_dir
         self.num_frames = num_frames
+        self.size = size
+        self.samples = []
 
-    def load_folder(self, folder_path):
-        """
-        Loads all video files from a folder into a single Tensor.
-        Returns: Tensor of shape [N, T, C, H, W] in range [0, 1]
-        """
-        files = sorted([
-            os.path.join(folder_path, f) 
-            for f in os.listdir(folder_path) 
-            if f.lower().endswith(('.mp4', '.avi', '.mov', '.mkv'))
-        ])
-        
-        if len(files) == 0:
-            raise ValueError(f"No videos found in {folder_path}")
-            
-        print(f"Loading {len(files)} videos from {folder_path}...")
-        
-        batch_videos = []
-        
-        for file_path in tqdm(files):
-            cap = cv2.VideoCapture(file_path)
-            frames = []
-            while len(frames) < self.num_frames:
-                ret, frame = cap.read()
-                if not ret: break
-                
-                # Resize and BGR -> RGB
-                frame = cv2.resize(frame, (self.size, self.size))
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frames.append(frame)
-            cap.release()
-            
-            # Handle edge cases
-            if len(frames) == 0:
-                print(f"Warning: Empty video {file_path}")
+        # Data source mapping
+        search_paths = {
+            "TII": os.path.join(data_root, "TII", "videos"),
+            "UZH": os.path.join(data_root, "UZH", "videos")
+        }
+
+        print(f"--- 📖 Reading IDs from: {id_manifest} ---")
+        with open(id_manifest, 'r') as f:
+            ids = [l.strip().split(',')[0].strip() for l in f if l.strip()]
+
+        for vid_id in ids:
+            # 1. Generated video path
+            gen_path = os.path.join(generated_dir, f"{vid_id}.mp4")
+            if not os.path.exists(gen_path):
                 continue
-                
-            # Pad or Truncate
-            while len(frames) < self.num_frames:
-                frames.append(frames[-1])
-            frames = frames[:self.num_frames]
+
+            # 2. GT video path (Look in TII then UZH)
+            gt_path = None
+            for source in ["TII", "UZH"]:
+                v_path = os.path.join(search_paths[source], f"{vid_id}.mp4")
+                if os.path.exists(v_path):
+                    gt_path = v_path
+                    break
             
-            # Convert to numpy [T, H, W, C]
-            video_np = np.array(frames)
-            batch_videos.append(video_np)
-            
-        # Stack into [N, T, H, W, C]
-        batch_tensor = torch.from_numpy(np.stack(batch_videos))
+            if gt_path:
+                self.samples.append({"gen": gen_path, "gt": gt_path, "id": vid_id})
+
+        print(f"--- ✅ Found {len(self.samples)} aligned pairs for visual metrics ---")
+
+    def load_video(self, path):
+        cap = cv2.VideoCapture(path)
+        frames = []
+        while len(frames) < self.num_frames:
+            ret, frame = cap.read()
+            if not ret: break
+            frame = cv2.resize(frame, (self.size, self.size))
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(frame)
+        cap.release()
         
-        # Permute to [N, T, C, H, W] for standard metrics
-        # (Check your calculate_fvd documentation if it needs [N, C, T, H, W])
-        batch_tensor = batch_tensor.permute(0, 1, 4, 2, 3)
+        if not frames: return None
+        while len(frames) < self.num_frames: frames.append(frames[-1])
         
-        # Normalize to [0, 1]
-        batch_tensor = batch_tensor.float() / 255.0
-        
-        return batch_tensor
+        # [T, H, W, C] -> [T, C, H, W]
+        video_np = np.array(frames[:self.num_frames])
+        tensor = torch.from_numpy(video_np).permute(0, 3, 1, 2).float() / 255.0
+        return tensor
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gen", required=True, help="Path to Generated videos")
-    parser.add_argument("--val", required=True, help="Path to Validation/Ground Truth videos")
-    parser.add_argument("--frames", type=int, default=30, help="Number of frames to use (must match model expectations)")
-    parser.add_argument("--size", type=int, default=64, help="Resolution to resize to")
-    parser.add_argument("--only_final", action="store_true", help="Calculate metrics only on the final frame")
+    parser.add_argument("--generated_dir", required=True, help="Path to generated mp4s")
+    parser.add_argument("--id_manifest", required=True, help="val_subset.txt")
+    parser.add_argument("--data_root", required=True, help="AeroBench root folder")
+    parser.add_argument("--frames", type=int, default=81)
+    parser.add_argument("--size", type=int, default=384)
+    parser.add_argument("--only_final", action="store_true")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # 1. Load Videos
-    loader = VideoLoader(size=args.size, num_frames=args.frames)
+    # 1. Setup Dataset
+    dataset = ManifestVideoDataset(
+        args.generated_dir, args.id_manifest, args.data_root, 
+        num_frames=args.frames, size=args.size
+    )
     
-    print("--- 📂 Loading Datasets ---")
-    videos1 = loader.load_folder(args.gen)   # Generated
-    videos2 = loader.load_folder(args.val)   # Ground Truth
-    
-    # Ensure count matches (Truncate to minimum common denominator)
-    min_len = min(len(videos1), len(videos2))
-    videos1 = videos1[:min_len]
-    videos2 = videos2[:min_len]
-    
-    print(f"Dataset shapes: {videos1.shape} vs {videos2.shape}")
-    print(f"Range: [{videos1.min():.2f}, {videos1.max():.2f}]")
+    if len(dataset.samples) == 0:
+        print("❌ No videos found to evaluate.")
+        return
 
-    # 2. Run Metrics
-    print("--- 📉 Calculating Metrics ---")
+    # 2. Load all videos into memory (Warning: High RAM usage for H100 nodes)
+    # If RAM is an issue, we can move this inside a loop
+    gen_list = []
+    gt_list = []
+    
+    print("--- 📂 Loading Videos into Tensors ---")
+    for sample in tqdm(dataset.samples):
+        gen_v = dataset.load_video(sample['gen'])
+        gt_v = dataset.load_video(sample['gt'])
+        if gen_v is not None and gt_v is not None:
+            gen_list.append(gen_v)
+            gt_list.append(gt_v)
+
+    # Stack to [N, T, C, H, W]
+    videos_gen = torch.stack(gen_list)
+    videos_gt = torch.stack(gt_list)
+
+    # 3. Run Metrics
+    print(f"--- 📉 Calculating Metrics on {len(gen_list)} videos ---")
     result = {}
     
-    # FVD
-    # Note: FVD usually expects [B, T, C, H, W] or [B, C, T, H, W]. 
-    # If your lib expects [B, C, T, H, W], uncomment the permute below:
-    # videos1_fvd = videos1.permute(0, 2, 1, 3, 4)
-    # videos2_fvd = videos2.permute(0, 2, 1, 3, 4)
-    result['fvd'] = calculate_fvd(videos1, videos2, device, method='styleganv', only_final=args.only_final)
+    # Standard formats: PSNR/SSIM usually [N, T, C, H, W]
+    result['psnr'] = calculate_psnr(videos_gen, videos_gt, only_final=args.only_final)
+    result['ssim'] = calculate_ssim(videos_gen, videos_gt, only_final=args.only_final)
     
-    # SSIM & PSNR (Usually run on CPU or GPU batch-wise)
-    result['ssim'] = calculate_ssim(videos1, videos2, only_final=args.only_final)
-    result['psnr'] = calculate_psnr(videos1, videos2, only_final=args.only_final)
+    # LPIPS/FVD often need GPU
+    result['lpips'] = calculate_lpips(videos_gen, videos_gt, device, only_final=args.only_final)
     
-    # LPIPS
-    result['lpips'] = calculate_lpips(videos1, videos2, device, only_final=args.only_final)
+    # FVD check: many implementations require [N, C, T, H, W]
+    # Check your calculate_fvd.py; if it fails, try permuting to (0, 2, 1, 3, 4)
+    result['fvd'] = calculate_fvd(videos_gen, videos_gt, device, method='styleganv', only_final=args.only_final)
 
-    # 3. Output
+    # 4. Output
     print("\n--- 🏆 Final Results ---")
     print(json.dumps(result, indent=4))
     
-    # Save to file
-    with open("metrics_results.json", "w") as f:
+    output_path = os.path.join(args.generated_dir, "visual_metrics.json")
+    with open(output_path, "w") as f:
         json.dump(result, f, indent=4)
+    print(f"💾 Saved results to {output_path}")
 
 if __name__ == "__main__":
     main()
-    
-    
-# Example usage:
-# python run_metrics.py --gen /path/to/my_generation_folder --val /path/to/validation_folder --frames 81 --size 224
-
-# /home/ab575577/projects_spring_2026/AeroBench/TII/videos
-
-# /home/ab575577/projects_fall_2025/Aero-predict/validation_res
