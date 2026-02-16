@@ -1,62 +1,70 @@
 import sys
 import os
 
-# Add the current directory to sys.path to resolve internal metric imports
+# Add current directory to path
 sys.path.append(os.getcwd())
 
 import torch
 import numpy as np
 import argparse
-import yaml
 import cv2
 import json
 from tqdm import tqdm
 
-# Ensure these files are in your python path
+# Ensure internal metrics can be imported
 try:
     from calculate_fvd import calculate_fvd
     from calculate_psnr import calculate_psnr
     from calculate_ssim import calculate_ssim
     from calculate_lpips import calculate_lpips
 except ImportError:
-    print("❌ Error: Metric calculation scripts (calculate_fvd.py, etc.) not found in path.")
+    print("❌ Error: Metric scripts not found. Run from the directory containing calculate_fvd.py etc.")
     sys.exit(1)
 
 class ManifestVideoDataset:
     def __init__(self, generated_dir, id_manifest, data_root, num_frames=81, size=384):
-        self.generated_dir = generated_dir
+        self.generated_dir = os.path.abspath(generated_dir)
         self.num_frames = num_frames
         self.size = size
         self.samples = []
 
-        # Data source mapping
-        search_paths = {
-            "TII": os.path.join(data_root, "TII", "videos"),
-            "UZH": os.path.join(data_root, "UZH", "videos")
-        }
+        data_root = os.path.abspath(data_root)
+        
+        # Exact paths based on your context
+        tii_video_root = os.path.join(data_root, "TII", "videos")
+        uzh_video_root = os.path.join(data_root, "UZH", "videos")
 
         print(f"--- 📖 Reading IDs from: {id_manifest} ---")
         with open(id_manifest, 'r') as f:
-            ids = [l.strip().split(',')[0].strip() for l in f if l.strip()]
+            for line in f:
+                if not line.strip(): continue
+                
+                # Extract the ID (the name)
+                # Handles lines like "/path/to/TII_flight_001.jpg, ..." or just "TII_flight_001"
+                raw_part = line.split(',')[0].strip()
+                vid_name = os.path.splitext(os.path.basename(raw_part))[0]
+                
+                # Check if it's "frame0", if so, take parent folder name
+                if vid_name == "frame0":
+                    vid_name = os.path.basename(os.path.dirname(raw_part))
 
-        for vid_id in ids:
-            # 1. Generated video path
-            gen_path = os.path.join(generated_dir, f"{vid_id}.mp4")
-            if not os.path.exists(gen_path):
-                continue
+                # 1. Path to your MODEL GENERATED video
+                gen_path = os.path.join(self.generated_dir, f"{vid_name}.mp4")
+                
+                # 2. Path to GROUND TRUTH
+                gt_path = None
+                tii_path = os.path.join(tii_video_root, f"{vid_name}.mp4")
+                uzh_path = os.path.join(uzh_video_root, f"{vid_name}.mp4")
 
-            # 2. GT video path (Look in TII then UZH)
-            gt_path = None
-            for source in ["TII", "UZH"]:
-                v_path = os.path.join(search_paths[source], f"{vid_id}.mp4")
-                if os.path.exists(v_path):
-                    gt_path = v_path
-                    break
-            
-            if gt_path:
-                self.samples.append({"gen": gen_path, "gt": gt_path, "id": vid_id})
+                if os.path.exists(tii_path):
+                    gt_path = tii_path
+                elif os.path.exists(uzh_path):
+                    gt_path = uzh_path
+                
+                if os.path.exists(gen_path) and gt_path:
+                    self.samples.append({"gen": gen_path, "gt": gt_path, "id": vid_name})
 
-        print(f"--- ✅ Found {len(self.samples)} aligned pairs for visual metrics ---")
+        print(f"--- ✅ Found {len(self.samples)} aligned pairs ---")
 
     def load_video(self, path):
         cap = cv2.VideoCapture(path)
@@ -64,8 +72,8 @@ class ManifestVideoDataset:
         while len(frames) < self.num_frames:
             ret, frame = cap.read()
             if not ret: break
-            frame = cv2.resize(frame, (self.size, self.size))
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # INTER_AREA is more rigorous for downsampling
+            frame = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), (self.size, self.size), interpolation=cv2.INTER_AREA)
             frames.append(frame)
         cap.release()
         
@@ -79,66 +87,48 @@ class ManifestVideoDataset:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--generated_dir", required=True, help="Path to generated mp4s")
-    parser.add_argument("--id_manifest", required=True, help="val_subset.txt")
-    parser.add_argument("--data_root", required=True, help="AeroBench root folder")
+    parser.add_argument("--generated_dir", required=True)
+    parser.add_argument("--id_manifest", required=True)
+    parser.add_argument("--data_root", required=True)
     parser.add_argument("--frames", type=int, default=81)
     parser.add_argument("--size", type=int, default=384)
-    parser.add_argument("--only_final", action="store_true")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dataset = ManifestVideoDataset(args.generated_dir, args.id_manifest, args.data_root, num_frames=args.frames, size=args.size)
     
-    # 1. Setup Dataset
-    dataset = ManifestVideoDataset(
-        args.generated_dir, args.id_manifest, args.data_root, 
-        num_frames=args.frames, size=args.size
-    )
-    
-    if len(dataset.samples) == 0:
-        print("❌ No videos found to evaluate.")
+    if not dataset.samples:
+        print("❌ No videos found. Ensure the filenames in generated_dir match the names in val_subset.txt.")
         return
 
-    # 2. Load all videos into memory (Warning: High RAM usage for H100 nodes)
-    # If RAM is an issue, we can move this inside a loop
-    gen_list = []
-    gt_list = []
-    
-    print("--- 📂 Loading Videos into Tensors ---")
+    gen_list, gt_list = [], []
+    print("--- 📂 Loading Videos ---")
     for sample in tqdm(dataset.samples):
-        gen_v = dataset.load_video(sample['gen'])
-        gt_v = dataset.load_video(sample['gt'])
-        if gen_v is not None and gt_v is not None:
-            gen_list.append(gen_v)
-            gt_list.append(gt_v)
+        v_gen = dataset.load_video(sample['gen'])
+        v_gt = dataset.load_video(sample['gt'])
+        if v_gen is not None and v_gt is not None:
+            gen_list.append(v_gen)
+            gt_list.append(v_gt)
 
-    # Stack to [N, T, C, H, W]
+    # Convert to Tensors [N, T, C, H, W]
     videos_gen = torch.stack(gen_list)
     videos_gt = torch.stack(gt_list)
 
-    # 3. Run Metrics
     print(f"--- 📉 Calculating Metrics on {len(gen_list)} videos ---")
-    result = {}
     
-    # Standard formats: PSNR/SSIM usually [N, T, C, H, W]
-    result['psnr'] = calculate_psnr(videos_gen, videos_gt, only_final=args.only_final)
-    result['ssim'] = calculate_ssim(videos_gen, videos_gt, only_final=args.only_final)
-    
-    # LPIPS/FVD often need GPU
-    result['lpips'] = calculate_lpips(videos_gen, videos_gt, device, only_final=args.only_final)
-    
-    # FVD check: many implementations require [N, C, T, H, W]
-    # Check your calculate_fvd.py; if it fails, try permuting to (0, 2, 1, 3, 4)
-    result['fvd'] = calculate_fvd(videos_gen, videos_gt, device, method='styleganv', only_final=args.only_final)
+    # Batch processing is often safer for LPIPS/FVD on high-res
+    psnr = calculate_psnr(videos_gen, videos_gt)
+    ssim = calculate_ssim(videos_gen, videos_gt)
+    lpips_val = calculate_lpips(videos_gen, videos_gt, device)
+    fvd_val = calculate_fvd(videos_gen, videos_gt, device, method='styleganv')
 
-    # 4. Output
-    print("\n--- 🏆 Final Results ---")
-    print(json.dumps(result, indent=4))
+    result = {"psnr": psnr, "ssim": ssim, "lpips": lpips_val, "fvd": fvd_val}
+    print("\n" + json.dumps(result, indent=4))
     
-    output_path = os.path.join(args.generated_dir, "visual_metrics.json")
-    with open(output_path, "w") as f:
+    out_file = os.path.join(args.generated_dir, "visual_metrics.json")
+    with open(out_file, 'w') as f:
         json.dump(result, f, indent=4)
-    print(f"💾 Saved results to {output_path}")
+    print(f"💾 Saved results to {out_file}")
 
 if __name__ == "__main__":
     main()
