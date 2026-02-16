@@ -96,25 +96,45 @@ def main():
     count = 0
 
     print(f"--- 📉 Calculating Metrics iteratively for {len(dataset.samples)} videos ---")
+    print(f"--- 📉 Calculating Metrics iteratively for {len(dataset.samples)} videos ---")
     for sample in tqdm(dataset.samples):
-        v_gen = dataset.load_video(sample['gen']).unsqueeze(0) # [1, T, C, H, W]
-        v_gt = dataset.load_video(sample['gt']).unsqueeze(0)
+        try:
+            v_gen = dataset.load_video(sample['gen']).unsqueeze(0) # [1, T, C, H, W]
+            v_gt = dataset.load_video(sample['gt']).unsqueeze(0)
 
-        # Extract values from dicts returned by calculation scripts
-        res_psnr = calculate_psnr(v_gen, v_gt)
-        psnr_total += res_psnr['psnr'] if isinstance(res_psnr, dict) else res_psnr
-        
-        res_ssim = calculate_ssim(v_gen, v_gt)
-        ssim_total += res_ssim['ssim'] if isinstance(res_ssim, dict) else res_ssim
-        
-        res_lpips = calculate_lpips(v_gen, v_gt, device)
-        lpips_total += res_lpips['lpips'] if isinstance(res_lpips, dict) else res_lpips
-        
-        # Keep on CPU to save System RAM; move to GPU only during FVD call
-        all_gen_for_fvd.append(v_gen.cpu())
-        all_gt_for_fvd.append(v_gt.cpu())
-        
-        count += 1
+            # Robust extraction for PSNR
+            res_psnr = calculate_psnr(v_gen, v_gt)
+            if isinstance(res_psnr, dict):
+                # Try to find a key that contains 'psnr' or take the first value
+                key = next((k for k in res_psnr.keys() if 'psnr' in k.lower()), list(res_psnr.keys())[0])
+                psnr_total += float(res_psnr[key])
+            else:
+                psnr_total += float(res_psnr)
+            
+            # Robust extraction for SSIM
+            res_ssim = calculate_ssim(v_gen, v_gt)
+            if isinstance(res_ssim, dict):
+                key = next((k for k in res_ssim.keys() if 'ssim' in k.lower()), list(res_ssim.keys())[0])
+                ssim_total += float(res_ssim[key])
+            else:
+                ssim_total += float(res_ssim)
+            
+            # Robust extraction for LPIPS
+            res_lpips = calculate_lpips(v_gen, v_gt, device)
+            if isinstance(res_lpips, dict):
+                key = next((k for k in res_lpips.keys() if 'lpips' in k.lower()), list(res_lpips.keys())[0])
+                lpips_total += float(res_lpips[key])
+            else:
+                lpips_total += float(res_lpips)
+            
+            # Collect for FVD (Keep on CPU)
+            all_gen_for_fvd.append(v_gen.cpu())
+            all_gt_for_fvd.append(v_gt.cpu())
+            
+            count += 1
+        except Exception as e:
+            print(f"⚠️ Warning: Skipping {sample['id']} due to error: {e}")
+            continue
 
     # Aggregated averages
     final_psnr = psnr_total / count
