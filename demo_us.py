@@ -118,7 +118,9 @@ def main():
     
     # Batch processing is often safer for LPIPS/FVD on high-res
     psnr = calculate_psnr(videos_gen, videos_gt)
+    print(psnr)
     ssim = calculate_ssim(videos_gen, videos_gt)
+    print(ssim)
     lpips_val = calculate_lpips(videos_gen, videos_gt, device)
     fvd_val = calculate_fvd(videos_gen, videos_gt, device, method='styleganv')
 
