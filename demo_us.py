@@ -44,7 +44,6 @@ class ManifestVideoDataset:
 
                 gen_path = os.path.join(self.generated_dir, f"{vid_name}.mp4")
                 
-                # Check both TII and UZH for ground truth
                 gt_path = None
                 for root in [tii_video_root, uzh_video_root]:
                     p = os.path.join(root, f"{vid_name}.mp4")
@@ -63,7 +62,6 @@ class ManifestVideoDataset:
         while len(frames) < self.num_frames:
             ret, frame = cap.read()
             if not ret: break
-            # INTER_AREA is more rigorous for downsampling to 384x384
             frame = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), (self.size, self.size), interpolation=cv2.INTER_AREA)
             frames.append(frame)
         cap.release()
@@ -72,7 +70,6 @@ class ManifestVideoDataset:
         while len(frames) < self.num_frames: frames.append(frames[-1])
         
         video_np = np.array(frames[:self.num_frames])
-        # Return [T, C, H, W] normalized to [0, 1]
         return torch.from_numpy(video_np).permute(0, 3, 1, 2).float() / 255.0
 
 def main():
@@ -96,61 +93,52 @@ def main():
     count = 0
 
     print(f"--- 📉 Calculating Metrics iteratively for {len(dataset.samples)} videos ---")
-    print(f"--- 📉 Calculating Metrics iteratively for {len(dataset.samples)} videos ---")
     for sample in tqdm(dataset.samples):
         try:
             v_gen = dataset.load_video(sample['gen']).unsqueeze(0) # [1, T, C, H, W]
             v_gt = dataset.load_video(sample['gt']).unsqueeze(0)
 
-            # Robust extraction for PSNR
-            res_psnr = calculate_psnr(v_gen, v_gt)
-            if isinstance(res_psnr, dict):
-                # Try to find a key that contains 'psnr' or take the first value
-                key = next((k for k in res_psnr.keys() if 'psnr' in k.lower()), list(res_psnr.keys())[0])
-                psnr_total += float(res_psnr[key])
-            else:
-                psnr_total += float(res_psnr)
+            # Robust extraction logic to handle dicts and lists
+            def extract_val(res, key_hint):
+                if isinstance(res, dict):
+                    key = next((k for k in res.keys() if key_hint in k.lower()), list(res.keys())[0])
+                    val = res[key]
+                else:
+                    val = res
+                return np.mean(val) if isinstance(val, (list, np.ndarray, torch.Tensor)) else float(val)
+
+            psnr_total += extract_val(calculate_psnr(v_gen, v_gt), 'psnr')
+            ssim_total += extract_val(calculate_ssim(v_gen, v_gt), 'ssim')
+            lpips_total += extract_val(calculate_lpips(v_gen, v_gt, device), 'lpips')
             
-            # Robust extraction for SSIM
-            res_ssim = calculate_ssim(v_gen, v_gt)
-            if isinstance(res_ssim, dict):
-                key = next((k for k in res_ssim.keys() if 'ssim' in k.lower()), list(res_ssim.keys())[0])
-                ssim_total += float(res_ssim[key])
-            else:
-                ssim_total += float(res_ssim)
-            
-            # Robust extraction for LPIPS
-            res_lpips = calculate_lpips(v_gen, v_gt, device)
-            if isinstance(res_lpips, dict):
-                key = next((k for k in res_lpips.keys() if 'lpips' in k.lower()), list(res_lpips.keys())[0])
-                lpips_total += float(res_lpips[key])
-            else:
-                lpips_total += float(res_lpips)
-            
-            # Collect for FVD (Keep on CPU)
+            # Keep tensors on CPU to prevent System RAM OOM
             all_gen_for_fvd.append(v_gen.cpu())
             all_gt_for_fvd.append(v_gt.cpu())
             
             count += 1
         except Exception as e:
-            print(f"⚠️ Warning: Skipping {sample['id']} due to error: {e}")
+            print(f"\n⚠️ Warning: Skipping {sample['id']} due to error: {e}")
             continue
 
-    # Aggregated averages
+    if count == 0:
+        print("❌ No videos were successfully processed.")
+        return
+
     final_psnr = psnr_total / count
     final_ssim = ssim_total / count
     final_lpips = lpips_total / count
 
-    print(f"PSNR: {final_psnr:.4f} | SSIM: {final_ssim:.4f} | LPIPS: {final_lpips:.4f}")
+    print(f"\n--- Results for {count} videos ---")
+    print(f"Average PSNR: {final_psnr:.4f}")
+    print(f"Average SSIM: {final_ssim:.4f}")
+    print(f"Average LPIPS: {final_lpips:.4f}")
 
-    print("--- 🧠 Aggregating Tensors for FVD ---")
-    # This part consumes significant RAM; Cat on CPU first
+    print("--- 🧠 Aggregating for FVD ---")
     videos_gen = torch.cat(all_gen_for_fvd, dim=0)
     videos_gt = torch.cat(all_gt_for_fvd, dim=0)
 
-    # StyleGAN-V FVD
     res_fvd = calculate_fvd(videos_gen, videos_gt, device, method='styleganv')
-    final_fvd = res_fvd['fvd'] if isinstance(res_fvd, dict) else res_fvd
+    final_fvd = extract_val(res_fvd, 'fvd')
 
     result = {
         "psnr": final_psnr,
