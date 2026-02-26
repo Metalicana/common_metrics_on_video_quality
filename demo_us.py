@@ -129,7 +129,7 @@ def main():
         print(f"FVD Error: {e}")
 
     # print(json.dumps(final, indent=4))
-    with open(os.path.join(args.generated_dir, "visual_metrics.json"), "w") as f:
+    # with open(os.path.join(args.generated_dir, "visual_metrics.json"), "w") as f:
         # json.dump(final, f, indent=4)
 
 if __name__ == "__main__":
