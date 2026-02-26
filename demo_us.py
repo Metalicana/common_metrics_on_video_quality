@@ -7,7 +7,7 @@ import cv2
 import json
 from tqdm import tqdm
 
-# Force OpenCV stability
+# Force stable OpenCV backend
 os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 sys.path.append(os.getcwd())
 
@@ -60,7 +60,6 @@ class ManifestVideoDataset:
         return torch.from_numpy(np.array(frames[:self.num_frames])).permute(0, 3, 1, 2).float() / 255.0
 
 def safe_extract(res):
-    """Rigorous extraction of scalar from any format."""
     if isinstance(res, dict):
         val = list(res.values())[0]
     else:
@@ -82,51 +81,58 @@ def main():
     dataset = ManifestVideoDataset(args.generated_dir, args.id_manifest, args.data_root, args.frames, args.size)
     
     results_list = {"psnr": [], "ssim": [], "lpips": []}
-    gen_list_for_fvd, gt_list_for_fvd = [], []
+    all_gen_feats = []
+    all_gt_feats = []
 
     print(f"--- 📉 Processing {len(dataset.samples)} samples ---")
     for sample in tqdm(dataset.samples):
         try:
-            # 1. LOAD TO CPU
+            # 1. Load Video
             v_gen_cpu = dataset.load_video(sample['gen']).unsqueeze(0)
             v_gt_cpu = dataset.load_video(sample['gt']).unsqueeze(0)
 
-            # 2. CALL PSNR/SSIM ON CPU (Bypass the CUDA-to-Numpy crash)
-            # results_list["psnr"].append(safe_extract(calculate_psnr(v_gen_cpu, v_gt_cpu)))
-            # results_list["ssim"].append(safe_extract(calculate_ssim(v_gen_cpu, v_gt_cpu)))
+            # 2. Pixel Metrics (CPU)
+            results_list["psnr"].append(safe_extract(calculate_psnr(v_gen_cpu, v_gt_cpu)))
+            results_list["ssim"].append(safe_extract(calculate_ssim(v_gen_cpu, v_gt_cpu)))
 
-            # 3. CALL LPIPS ON GPU (Required for speed/model)
+            # 3. GPU metrics (LPIPS + FVD Feature Extraction)
             v_gen_gpu = v_gen_cpu.to(device)
             v_gt_gpu = v_gt_cpu.to(device)
-            # results_list["lpips"].append(safe_extract(calculate_lpips(v_gen_gpu, v_gt_gpu, device)))
+            
+            results_list["lpips"].append(safe_extract(calculate_lpips(v_gen_gpu, v_gt_gpu, device)))
 
-            # 4. STORE FOR FVD (CPU only to avoid OOM)
-            gen_list_for_fvd.append(v_gen_cpu)
-            gt_list_for_fvd.append(v_gt_cpu)
+            # EXTRACTION: Get features, NOT the whole video
+            with torch.no_grad():
+                # NOTE: Ensure your calculate_fvd has this function or similar
+                # If it doesn't, we need to see your calculate_fvd.py
+                gen_feat = calculate_fvd(v_gen_gpu, v_gt_gpu, device, return_features=True)['gen']
+                gt_feat = calculate_fvd(v_gen_gpu, v_gt_gpu, device, return_features=True)['gt']
+                
+                all_gen_feats.append(gen_feat.cpu())
+                all_gt_feats.append(gt_feat.cpu())
 
-            del v_gen_gpu, v_gt_gpu
+            # 4. CRITICAL: Free GPU memory
+            del v_gen_gpu, v_gt_gpu, v_gen_cpu, v_gt_cpu
             torch.cuda.empty_cache()
 
         except Exception as e:
             print(f"Failed {sample['id']}: {e}")
 
-    # 5. FINAL AGGREGATION
+    # 5. Final Calculation
+    print(f"--- 🧠 Finalizing FVD Distribution Math ---")
+    gen_feats = torch.cat(all_gen_feats, dim=0)
+    gt_feats = torch.cat(all_gt_feats, dim=0)
+    
+    # This call now passes features to the distance function
+    fvd_final = calculate_fvd(gen_feats, gt_feats, device, input_is_features=True)
+
     final = {
         "psnr": np.mean(results_list["psnr"]),
         "ssim": np.mean(results_list["ssim"]),
         "lpips": np.mean(results_list["lpips"]),
-        "fvd": 0.0,
+        "fvd": safe_extract(fvd_final),
         "count": len(results_list["psnr"])
     }
-
-    print("--- 🧠 Final FVD Calculation ---")
-    try:
-        fvd_res = calculate_fvd(torch.cat(gen_list_for_fvd, dim=0), 
-                                torch.cat(gt_list_for_fvd, dim=0), 
-                                device, method='styleganv')
-        final["fvd"] = safe_extract(fvd_res)
-    except Exception as e:
-        print(f"FVD Error: {e}")
 
     print(json.dumps(final, indent=4))
     with open(os.path.join(args.generated_dir, "visual_metrics.json"), "w") as f:
