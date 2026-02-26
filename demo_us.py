@@ -84,53 +84,53 @@ def main():
     results_list = {"psnr": [], "ssim": [], "lpips": []}
     gen_list_for_fvd, gt_list_for_fvd = [], []
 
-    print(f"--- 📉 Processing {len(dataset.samples)} samples ---")
-    for sample in tqdm(dataset.samples):
-        try:
-            # 1. LOAD TO CPU
-            v_gen_cpu = dataset.load_video(sample['gen']).unsqueeze(0)
-            v_gt_cpu = dataset.load_video(sample['gt']).unsqueeze(0)
+    # print(f"--- 📉 Processing {len(dataset.samples)} samples ---")
+    # for sample in tqdm(dataset.samples):
+    #     try:
+    #         # 1. LOAD TO CPU
+    #         v_gen_cpu = dataset.load_video(sample['gen']).unsqueeze(0)
+    #         v_gt_cpu = dataset.load_video(sample['gt']).unsqueeze(0)
 
-            # 2. CALL PSNR/SSIM ON CPU (Bypass the CUDA-to-Numpy crash)
-            results_list["psnr"].append(safe_extract(calculate_psnr(v_gen_cpu, v_gt_cpu)))
-            results_list["ssim"].append(safe_extract(calculate_ssim(v_gen_cpu, v_gt_cpu)))
+    #         # 2. CALL PSNR/SSIM ON CPU (Bypass the CUDA-to-Numpy crash)
+    #         results_list["psnr"].append(safe_extract(calculate_psnr(v_gen_cpu, v_gt_cpu)))
+    #         results_list["ssim"].append(safe_extract(calculate_ssim(v_gen_cpu, v_gt_cpu)))
 
-            # 3. CALL LPIPS ON GPU (Required for speed/model)
-            v_gen_gpu = v_gen_cpu.to(device)
-            v_gt_gpu = v_gt_cpu.to(device)
-            results_list["lpips"].append(safe_extract(calculate_lpips(v_gen_gpu, v_gt_gpu, device)))
+    #         # 3. CALL LPIPS ON GPU (Required for speed/model)
+    #         v_gen_gpu = v_gen_cpu.to(device)
+    #         v_gt_gpu = v_gt_cpu.to(device)
+    #         results_list["lpips"].append(safe_extract(calculate_lpips(v_gen_gpu, v_gt_gpu, device)))
 
-            # 4. STORE FOR FVD (CPU only to avoid OOM)
-            gen_list_for_fvd.append(v_gen_cpu)
-            gt_list_for_fvd.append(v_gt_cpu)
+    #         # 4. STORE FOR FVD (CPU only to avoid OOM)
+    #         gen_list_for_fvd.append(v_gen_cpu)
+    #         gt_list_for_fvd.append(v_gt_cpu)
 
-            del v_gen_gpu, v_gt_gpu
-            torch.cuda.empty_cache()
+    #         del v_gen_gpu, v_gt_gpu
+    #         torch.cuda.empty_cache()
 
-        except Exception as e:
-            print(f"Failed {sample['id']}: {e}")
+    #     except Exception as e:
+    #         print(f"Failed {sample['id']}: {e}")
 
-    # 5. FINAL AGGREGATION
-    final = {
-        "psnr": np.mean(results_list["psnr"]),
-        "ssim": np.mean(results_list["ssim"]),
-        "lpips": np.mean(results_list["lpips"]),
-        "fvd": 0.0,
-        "count": len(results_list["psnr"])
-    }
+    # # 5. FINAL AGGREGATION
+    # final = {
+    #     "psnr": np.mean(results_list["psnr"]),
+    #     "ssim": np.mean(results_list["ssim"]),
+    #     "lpips": np.mean(results_list["lpips"]),
+    #     "fvd": 0.0,
+    #     "count": len(results_list["psnr"])
+    # }
 
     print("--- 🧠 Final FVD Calculation ---")
     try:
         fvd_res = calculate_fvd(torch.cat(gen_list_for_fvd, dim=0), 
                                 torch.cat(gt_list_for_fvd, dim=0), 
                                 device, method='styleganv')
-        final["fvd"] = safe_extract(fvd_res)
+        # final["fvd"] = safe_extract(fvd_res)
     except Exception as e:
         print(f"FVD Error: {e}")
 
-    print(json.dumps(final, indent=4))
+    # print(json.dumps(final, indent=4))
     with open(os.path.join(args.generated_dir, "visual_metrics.json"), "w") as f:
-        json.dump(final, f, indent=4)
+        # json.dump(final, f, indent=4)
 
 if __name__ == "__main__":
     main()
