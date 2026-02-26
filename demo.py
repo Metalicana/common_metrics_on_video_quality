@@ -6,10 +6,10 @@ from calculate_lpips import calculate_lpips
 
 # ps: pixel value should be in [0, 1]!
 
-NUMBER_OF_VIDEOS = 8
-VIDEO_LENGTH = 30
+NUMBER_OF_VIDEOS = 250
+VIDEO_LENGTH = 81
 CHANNEL = 3
-SIZE = 64
+SIZE = 384
 videos1 = torch.zeros(NUMBER_OF_VIDEOS, VIDEO_LENGTH, CHANNEL, SIZE, SIZE, requires_grad=False)
 videos2 = torch.ones(NUMBER_OF_VIDEOS, VIDEO_LENGTH, CHANNEL, SIZE, SIZE, requires_grad=False)
 device = torch.device("cuda")
