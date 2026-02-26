@@ -7,7 +7,7 @@ import cv2
 import json
 from tqdm import tqdm
 
-# Force stable OpenCV backend
+# Force stable OpenCV backend and single-threading to prevent engine errors
 os.environ["OPENCV_FOR_THREADS_NUM"] = "1"
 
 sys.path.append(os.getcwd())
@@ -28,6 +28,7 @@ class ManifestVideoDataset:
         self.size = size
         self.samples = []
         
+        data_root = os.path.abspath(data_root)
         tii_root = os.path.join(data_root, "TII", "videos")
         uzh_root = os.path.join(data_root, "UZH", "videos")
 
@@ -64,6 +65,7 @@ class ManifestVideoDataset:
         if not frames: return None
         while len(frames) < self.num_frames: frames.append(frames[-1])
         video_np = np.array(frames[:self.num_frames])
+        # Return on CPU initially to avoid early device conflicts
         return torch.from_numpy(video_np).permute(0, 3, 1, 2).float() / 255.0
 
 def extract_val(res, key_hint):
@@ -72,7 +74,10 @@ def extract_val(res, key_hint):
         val = res[key]
     else:
         val = res
-    return np.mean(val) if isinstance(val, (list, np.ndarray, torch.Tensor)) else float(val)
+    # Ensure value is off GPU before conversion
+    if torch.is_tensor(val):
+        val = val.detach().cpu().item() if val.numel() == 1 else val.detach().cpu().numpy()
+    return np.mean(val)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -88,52 +93,67 @@ def main():
                                   num_frames=args.frames, size=args.size)
     
     metrics = {"psnr": [], "ssim": [], "lpips": []}
-    all_gen_features = []
-    all_gt_features = []
+    valid_gen_videos = []
+    valid_gt_videos = []
 
-    print(f"--- 📉 Processing {len(dataset.samples)} videos ---")
+    print(f"--- 📉 Calculating PSNR/SSIM/LPIPS for {len(dataset.samples)} videos ---")
     for sample in tqdm(dataset.samples):
         try:
-            v_gen = dataset.load_video(sample['gen']).unsqueeze(0).to(device)
-            v_gt = dataset.load_video(sample['gt']).unsqueeze(0).to(device)
+            v_gen_cpu = dataset.load_video(sample['gen'])
+            v_gt_cpu = dataset.load_video(sample['gt'])
+            
+            if v_gen_cpu is None or v_gt_cpu is None: continue
 
-            # Standard Metrics
+            # Move to device for calculation
+            v_gen = v_gen_cpu.unsqueeze(0).to(device)
+            v_gt = v_gt_cpu.unsqueeze(0).to(device)
+
+            # Metric calls - ensure these functions handle device internal to their logic
+            # or explicitly use .detach().cpu() within extract_val
             metrics["psnr"].append(extract_val(calculate_psnr(v_gen, v_gt), 'psnr'))
             metrics["ssim"].append(extract_val(calculate_ssim(v_gen, v_gt), 'ssim'))
             metrics["lpips"].append(extract_val(calculate_lpips(v_gen, v_gt, device), 'lpips'))
             
-            # Feature Extraction for FVD (Assume calculate_fvd can return features)
-            # If your calculate_fvd only does end-to-end, we must pass it in chunks
-            # but for true FVD, we aggregate.
-            all_gen_features.append(v_gen.cpu()) # Still big, but better than batching FVD
-            all_gt_features.append(v_gt.cpu())
+            # Save to CPU for FVD to prevent GPU OOM
+            valid_gen_videos.append(v_gen_cpu.unsqueeze(0))
+            valid_gt_videos.append(v_gt_cpu.unsqueeze(0))
             
             del v_gen, v_gt
             torch.cuda.empty_cache()
+            
         except Exception as e:
-            print(f"Error skipping {sample['id']}: {e}")
+            print(f"\nError skipping {sample['id']}: {e}")
+
+    if not metrics["psnr"]:
+        print("❌ No videos were processed successfully.")
+        return
 
     # Calculate Global FVD
-    print(f"--- 🧠 Calculating Global FVD ---")
-    # This assumes calculate_fvd supports the full stack. 
-    # If memory is STILL an issue, calculate_fvd needs to be modified 
-    # to return the I3D features instead of the distance.
-    gen_tensor = torch.cat(all_gen_features, dim=0)
-    gt_tensor = torch.cat(all_gt_features, dim=0)
-    
-    fvd_res = calculate_fvd(gen_tensor, gt_tensor, device, method='styleganv')
-    
+    print(f"--- 🧠 Calculating Global FVD for {len(valid_gen_videos)} videos ---")
+    try:
+        # Concatenate on CPU, then calculate_fvd usually handles the GPU transfer internally
+        all_gen = torch.cat(valid_gen_videos, dim=0)
+        all_gt = torch.cat(valid_gt_videos, dim=0)
+        fvd_res = calculate_fvd(all_gen, all_gt, device, method='styleganv')
+        fvd_val = extract_val(fvd_res, 'fvd')
+    except Exception as e:
+        print(f"FVD Calculation failed: {e}")
+        fvd_val = float('nan')
+
     final_results = {
-        "psnr_mean": np.mean(metrics["psnr"]),
-        "ssim_mean": np.mean(metrics["ssim"]),
-        "lpips_mean": np.mean(metrics["lpips"]),
-        "fvd": extract_val(fvd_res, 'fvd'),
+        "psnr": float(np.mean(metrics["psnr"])),
+        "ssim": float(np.mean(metrics["ssim"])),
+        "lpips": float(np.mean(metrics["lpips"])),
+        "fvd": fvd_val,
         "num_samples": len(metrics["psnr"])
     }
 
     print("\n" + json.dumps(final_results, indent=4))
-    with open(os.path.join(args.generated_dir, "visual_metrics.json"), 'w') as f:
+    
+    out_file = os.path.join(args.generated_dir, "visual_metrics.json")
+    with open(out_file, 'w') as f:
         json.dump(final_results, f, indent=4)
+    print(f"💾 Saved results to {out_file}")
 
 if __name__ == "__main__":
     main()
