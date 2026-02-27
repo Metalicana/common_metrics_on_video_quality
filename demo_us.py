@@ -83,7 +83,7 @@ def main():
     results_list = {"psnr": [], "ssim": [], "lpips": []}
     all_gen_feats = []
     all_gt_feats = []
-    # import pdb; pdb.set_trace()
+    import pdb; pdb.set_trace()
     print(f"--- 📉 Processing {len(dataset.samples)} samples ---")
     for sample in tqdm(dataset.samples):
         try:
