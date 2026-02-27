@@ -1,5 +1,6 @@
 import sys
 import os
+from unittest import result
 import torch
 import numpy as np
 import argparse
@@ -120,21 +121,18 @@ def main():
     print(f"--- 🧠 Finalizing FVD Distribution Math ---")
     # gen_feats = torch.cat(all_gen_feats, dim=0)
     # gt_feats = torch.cat(all_gt_feats, dim=0)
-    
+    result = {}
     # This call now passes features to the distance function
-    fvd_final = calculate_fvd(all_gen_videos, all_gt_videos, device, only_final=False)
-    print(fvd_final)
-    # final = {
-    #     "psnr": np.mean(results_list["psnr"]),
-    #     "ssim": np.mean(results_list["ssim"]),
-    #     "lpips": np.mean(results_list["lpips"]),
-    #     "fvd": safe_extract(fvd_final),
-    #     "count": len(results_list["psnr"])
-    # }
+    result['fvd'] = calculate_fvd(all_gen_videos, all_gt_videos, device, only_final=False)
+    
+    result['ssim'] = calculate_ssim(all_gen_videos, all_gt_videos, only_final=False)
+    result['psnr'] = calculate_psnr(all_gen_videos, all_gt_videos, only_final=False)
+    result['lpips'] = calculate_lpips(all_gen_videos, all_gt_videos, device, only_final=False)
+    print(result)
 
-    # print(json.dumps(final, indent=4))
-    # with open(os.path.join(args.generated_dir, "visual_metrics.json"), "w") as f:
-    #     json.dump(final, f, indent=4)
+    print(json.dumps(result, indent=4))
+    with open(os.path.join(args.generated_dir, f"visual_metrics_{args.generated_dir.split('/')[-1]}.json"), "w") as f:
+        json.dump(result, f, indent=4)
 
 if __name__ == "__main__":
     main()
