@@ -83,8 +83,11 @@ def main():
     results_list = {"psnr": [], "ssim": [], "lpips": []}
     all_gen_feats = []
     all_gt_feats = []
+    all_gen_videos = torch.zeros((250, 81, 3, 384, 384), dtype=torch.float32).to(device)
+    all_gt_videos = torch.zeros((250, 81, 3, 384, 384), dtype=torch.float32).to(device)
     import pdb; pdb.set_trace()
     print(f"--- 📉 Processing {len(dataset.samples)} samples ---")
+    i = 0
     for sample in tqdm(dataset.samples):
         try:
             # 1. Load Video
@@ -102,14 +105,8 @@ def main():
             # results_list["lpips"].append(safe_extract(calculate_lpips(v_gen_gpu, v_gt_gpu, device)))
 
             # EXTRACTION: Get features, NOT the whole video
-            with torch.no_grad():
-                # NOTE: Ensure your calculate_fvd has this function or similar
-                # If it doesn't, we need to see your calculate_fvd.py
-                gen_feat = calculate_fvd(v_gen_gpu, v_gt_gpu, device, return_features=True)['gen']
-                gt_feat = calculate_fvd(v_gen_gpu, v_gt_gpu, device, return_features=True)['gt']
-                
-                all_gen_feats.append(gen_feat.cpu())
-                all_gt_feats.append(gt_feat.cpu())
+            all_gen_videos[i] = v_gen_gpu.squeeze(0)
+            all_gt_videos[i] = v_gt_gpu.squeeze(0) 
 
             # 4. CRITICAL: Free GPU memory
             del v_gen_gpu, v_gt_gpu, v_gen_cpu, v_gt_cpu
@@ -119,24 +116,25 @@ def main():
             print(f"Failed {sample['id']}: {e}")
 
     # 5. Final Calculation
+    print(all_gen_videos.shape, all_gt_videos.shape)
     print(f"--- 🧠 Finalizing FVD Distribution Math ---")
-    gen_feats = torch.cat(all_gen_feats, dim=0)
-    gt_feats = torch.cat(all_gt_feats, dim=0)
+    # gen_feats = torch.cat(all_gen_feats, dim=0)
+    # gt_feats = torch.cat(all_gt_feats, dim=0)
     
     # This call now passes features to the distance function
-    fvd_final = calculate_fvd(gen_feats, gt_feats, device, input_is_features=True)
+    fvd_final = calculate_fvd(all_gen_videos, all_gt_videos, device, only_final=False)
+    print(fvd_final)
+    # final = {
+    #     "psnr": np.mean(results_list["psnr"]),
+    #     "ssim": np.mean(results_list["ssim"]),
+    #     "lpips": np.mean(results_list["lpips"]),
+    #     "fvd": safe_extract(fvd_final),
+    #     "count": len(results_list["psnr"])
+    # }
 
-    final = {
-        "psnr": np.mean(results_list["psnr"]),
-        "ssim": np.mean(results_list["ssim"]),
-        "lpips": np.mean(results_list["lpips"]),
-        "fvd": safe_extract(fvd_final),
-        "count": len(results_list["psnr"])
-    }
-
-    print(json.dumps(final, indent=4))
-    with open(os.path.join(args.generated_dir, "visual_metrics.json"), "w") as f:
-        json.dump(final, f, indent=4)
+    # print(json.dumps(final, indent=4))
+    # with open(os.path.join(args.generated_dir, "visual_metrics.json"), "w") as f:
+    #     json.dump(final, f, indent=4)
 
 if __name__ == "__main__":
     main()
