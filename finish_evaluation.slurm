@@ -6,7 +6,8 @@
 #SBATCH --gres=gpu:nvidia_h100_pcie:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
-#SBATCH --time=24:00:00
+#SBATCH --exclude=evc22
+#SBATCH --time=3:00:00
 #SBATCH --export=ALL
 
 # 1. Create logs dir just in case
