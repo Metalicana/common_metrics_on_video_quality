@@ -108,11 +108,12 @@ def main():
     # gen_feats = torch.cat(all_gen_feats, dim=0)
     # gt_feats = torch.cat(all_gt_feats, dim=0)
     result = {}
+    result['fvd'] = calculate_fvd(all_gen_videos, all_gt_videos, device, only_final=False)
     # This call now passes features to the distance function
     result['ssim'] = calculate_ssim(all_gen_videos, all_gt_videos, only_final=False)
     result['psnr'] = calculate_psnr(all_gen_videos, all_gt_videos, only_final=False)
     # result['lpips'] = calculate_lpips(all_gen_videos, all_gt_videos, device, only_final=False)
-    result['fvd'] = calculate_fvd(all_gen_videos, all_gt_videos, device, only_final=False)
+    
     
     
     print(result)
