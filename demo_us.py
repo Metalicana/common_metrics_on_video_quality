@@ -80,12 +80,9 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataset = ManifestVideoDataset(args.generated_dir, args.id_manifest, args.data_root, args.frames, args.size)
-    
-    results_list = {"psnr": [], "ssim": [], "lpips": []}
-    all_gen_feats = []
-    all_gt_feats = []
-    all_gen_videos = torch.zeros(250, 81, 3, 384, 384, reqiures_grad=False)
-    all_gt_videos = torch.zeros(250, 81, 3, 384, 384, reqiures_grad=False)
+
+    all_gen_videos = torch.zeros(250, 81, 3, 384, 384, requires_grad=False)
+    all_gt_videos = torch.zeros(250, 81, 3, 384, 384, requires_grad=False)
     # import pdb; pdb.set_trace()
     print(f"--- 📉 Processing {len(dataset.samples)} samples ---")
     i = 0
