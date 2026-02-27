@@ -83,8 +83,8 @@ def main():
     results_list = {"psnr": [], "ssim": [], "lpips": []}
     all_gen_feats = []
     all_gt_feats = []
-    all_gen_videos = torch.zeros((250, 81, 3, 384, 384), dtype=torch.float32).to(device)
-    all_gt_videos = torch.zeros((250, 81, 3, 384, 384), dtype=torch.float32).to(device)
+    all_gen_videos = torch.zeros((250, 81, 3, 384, 384)).to(device)
+    all_gt_videos = torch.zeros((250, 81, 3, 384, 384)).to(device)
     import pdb; pdb.set_trace()
     print(f"--- 📉 Processing {len(dataset.samples)} samples ---")
     i = 0
