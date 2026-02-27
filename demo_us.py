@@ -84,8 +84,8 @@ def main():
     results_list = {"psnr": [], "ssim": [], "lpips": []}
     all_gen_feats = []
     all_gt_feats = []
-    all_gen_videos = torch.zeros((250, 81, 3, 384, 384)).to(device)
-    all_gt_videos = torch.zeros((250, 81, 3, 384, 384)).to(device)
+    all_gen_videos = torch.zeros((250, 81, 3, 384, 384), reqiures_grad=False)
+    all_gt_videos = torch.zeros((250, 81, 3, 384, 384), reqiures_grad=False)
     # import pdb; pdb.set_trace()
     print(f"--- 📉 Processing {len(dataset.samples)} samples ---")
     i = 0
@@ -123,11 +123,12 @@ def main():
     # gt_feats = torch.cat(all_gt_feats, dim=0)
     result = {}
     # This call now passes features to the distance function
-    result['fvd'] = calculate_fvd(all_gen_videos, all_gt_videos, device, only_final=False)
-    
     result['ssim'] = calculate_ssim(all_gen_videos, all_gt_videos, only_final=False)
     result['psnr'] = calculate_psnr(all_gen_videos, all_gt_videos, only_final=False)
     result['lpips'] = calculate_lpips(all_gen_videos, all_gt_videos, device, only_final=False)
+    result['fvd'] = calculate_fvd(all_gen_videos, all_gt_videos, device, only_final=False)
+    
+    
     print(result)
 
     print(json.dumps(result, indent=4))
