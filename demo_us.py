@@ -85,7 +85,7 @@ def main():
     all_gt_feats = []
     all_gen_videos = torch.zeros((250, 81, 3, 384, 384), dtype=torch.float32).to(device)
     all_gt_videos = torch.zeros((250, 81, 3, 384, 384), dtype=torch.float32).to(device)
-    # import pdb; pdb.set_trace()
+    import pdb; pdb.set_trace()
     print(f"--- 📉 Processing {len(dataset.samples)} samples ---")
     i = 0
     for sample in tqdm(dataset.samples):
@@ -107,7 +107,7 @@ def main():
             # EXTRACTION: Get features, NOT the whole video
             all_gen_videos[i] = v_gen_gpu.squeeze(0)
             all_gt_videos[i] = v_gt_gpu.squeeze(0) 
-
+            i+=1
             # 4. CRITICAL: Free GPU memory
             del v_gen_gpu, v_gt_gpu, v_gen_cpu, v_gt_cpu
             torch.cuda.empty_cache()
