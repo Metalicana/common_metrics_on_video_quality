@@ -92,17 +92,6 @@ def main():
             v_gen_cpu = dataset.load_video(sample['gen']).unsqueeze(0)
             v_gt_cpu = dataset.load_video(sample['gt']).unsqueeze(0)
 
-            # 2. Pixel Metrics (CPU)
-            # results_list["psnr"].append(safe_extract(calculate_psnr(v_gen_cpu, v_gt_cpu)))
-            # results_list["ssim"].append(safe_extract(calculate_ssim(v_gen_cpu, v_gt_cpu)))
-
-            # 3. GPU metrics (LPIPS + FVD Feature Extraction)
-            # v_gen_gpu = v_gen_cpu.to(device)
-            # v_gt_gpu = v_gt_cpu.to(device)
-            
-            # results_list["lpips"].append(safe_extract(calculate_lpips(v_gen_gpu, v_gt_gpu, device)))
-
-            # EXTRACTION: Get features, NOT the whole video
             all_gen_videos[i] = v_gen_cpu.squeeze(0)
             all_gt_videos[i] = v_gt_cpu.squeeze(0) 
             i+=1
