@@ -27,4 +27,4 @@ PYTHONPATH=. python evaluate_aerobench_pairs.py \
   --data_root /home/ab575577/projects_spring_2026/AeroBench \
   --size 384 \
   --frames 81 \
-  --max_pairs 391
+  --max_pairs 250

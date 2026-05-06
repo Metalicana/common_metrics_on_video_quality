@@ -110,8 +110,12 @@ def main():
             raise SystemExit("--max_pairs must be greater than 0")
         pairs = pairs[:args.max_pairs]
 
-    gen_tensors = []
-    gt_tensors = []
+    videos_gen = torch.empty(
+        len(pairs), args.frames, 3, args.size, args.size, dtype=torch.float32, requires_grad=False
+    )
+    videos_gt = torch.empty(
+        len(pairs), args.frames, 3, args.size, args.size, dtype=torch.float32, requires_grad=False
+    )
     matched_names = []
 
     print(f"Matched {total_pairs} generated videos to AeroBench GT videos.")
@@ -120,13 +124,11 @@ def main():
     if missing:
         print(f"Skipping {len(missing)} generated videos with no GT match.")
 
-    for gen_path, gt_path in tqdm(pairs, desc="loading videos"):
-        gen_tensors.append(load_video(gen_path, args.frames, args.size))
-        gt_tensors.append(load_video(gt_path, args.frames, args.size))
+    for idx, (gen_path, gt_path) in enumerate(tqdm(pairs, desc="loading videos")):
+        videos_gen[idx] = load_video(gen_path, args.frames, args.size)
+        videos_gt[idx] = load_video(gt_path, args.frames, args.size)
         matched_names.append(gen_path.stem)
 
-    videos_gen = torch.stack(gen_tensors, dim=0)
-    videos_gt = torch.stack(gt_tensors, dim=0)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     result = {
