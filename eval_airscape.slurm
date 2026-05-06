@@ -26,4 +26,5 @@ PYTHONPATH=. python evaluate_aerobench_pairs.py \
   --generated_dir /home/ab575577/projects_fall_2025/video-gen-models/CogVideo/outputs/eval/airscape \
   --data_root /home/ab575577/projects_spring_2026/AeroBench \
   --size 384 \
-  --frames 81
+  --frames 81 \
+  --max_pairs 391

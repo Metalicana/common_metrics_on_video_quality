@@ -81,6 +81,7 @@ def main():
     parser.add_argument("--method", choices=("styleganv", "videogpt"), default="styleganv")
     parser.add_argument("--recursive", action="store_true", help="search generated_dir recursively")
     parser.add_argument("--per_frame", action="store_true", help="return per-frame SSIM and per-prefix FVD")
+    parser.add_argument("--max_pairs", type=int, default=None, help="evaluate at most this many matched pairs")
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
@@ -103,11 +104,19 @@ def main():
             f"against {len(gt_index)} AeroBench GT videos."
         )
 
+    total_pairs = len(pairs)
+    if args.max_pairs is not None:
+        if args.max_pairs <= 0:
+            raise SystemExit("--max_pairs must be greater than 0")
+        pairs = pairs[:args.max_pairs]
+
     gen_tensors = []
     gt_tensors = []
     matched_names = []
 
-    print(f"Matched {len(pairs)} generated videos to AeroBench GT videos.")
+    print(f"Matched {total_pairs} generated videos to AeroBench GT videos.")
+    if len(pairs) < total_pairs:
+        print(f"Evaluating first {len(pairs)} matched pairs due to --max_pairs.")
     if missing:
         print(f"Skipping {len(missing)} generated videos with no GT match.")
 
@@ -124,6 +133,7 @@ def main():
         "generated_dir": str(generated_dir),
         "data_root": str(Path(args.data_root)),
         "num_pairs": len(pairs),
+        "total_matched_pairs": total_pairs,
         "frames": args.frames,
         "size": args.size,
         "matched_names": matched_names,
